@@ -121,7 +121,6 @@ then
         exit 1
         ;;
       *)
-        ask
         prompt
         read -rp "Select an option: " answer
         ;;
