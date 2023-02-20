@@ -1,4 +1,5 @@
 #!/bin/bash
+# https://docs.mirantis.com/msr/3.0/install/install-offline/prepare-your-environment.html
 
 set -e
 
@@ -120,7 +121,9 @@ then
         exit 1
         ;;
       *)
-        break
+        ask
+        prompt
+        read -rp "Select an option: " answer
         ;;
     esac
   done
