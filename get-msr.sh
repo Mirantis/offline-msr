@@ -1,34 +1,46 @@
 #!/bin/bash
-# https://docs.mirantis.com/msr/3.0/install/install-offline/prepare-your-environment.html
 
 set -e
 
 POSTGRES_OPERATOR_VERSION=1.7.1
 CERT_MANAGER_VERSION=1.7.2
-MSR_CHART_VERSION=1.0.6
+MSR_VERSION=3.0.6
 QUIET_MODE=0
 
 declare -a IMAGES=()
+declare -A MSR_VERSIONS=()
 
 pull_images_for() {
-    echo "Pulling images for '$1'..."
+  echo "Pulling images for '$1'..."
 
-    pushd "$1" > /dev/null || exit
+  pushd "$1" > /dev/null || exit
 
-    helm template . \
-    | yq e "..|.image? | select(.)" - \
-    | grep -wv "\-\-\-" | sort -u | xargs -L1 docker pull
-    
-    popd > /dev/null || exit
+  helm template . \
+  | yq e "..|.image? | select(.)" - \
+  | grep -wv "\-\-\-" | sort -u | xargs -L1 docker pull
+  
+  popd > /dev/null || exit
 }
 
 backup_images() {
-    images=$(docker images "$1" --format "table {{.Repository}}:{{.Tag}}" | tail -n +2)
+  images=$(docker images "$1" --format "table {{.Repository}}:{{.Tag}}" | tail -n +2)
 
-    for image in $images ; do
-        echo "Processing $image"
-        IMAGES+=("$image")
-    done
+  for image in $images ; do
+    echo "Processing $image"
+    IMAGES+=("$image")
+  done
+}
+
+build_MSR_versions_map() {
+  apps=$(helm search repo msr --versions -o yaml | yq e ".[] | .app_version" -)
+  declare -a app_versions=($apps)
+  vers=$(helm search repo msr --versions -o yaml | yq e ".[] | .version" -)
+  declare -a versions=($vers)
+
+  for idx in "${!app_versions[@]}"
+  do
+    MSR_VERSIONS["${app_versions[$idx]}"]=${versions[$idx]}
+  done
 }
 
 help() {
@@ -36,7 +48,7 @@ help() {
    echo "Usage: $0 --postgres version --certmanager version --msr version --msrchart version"
    echo -e "\t--postgres - postgres-operator chart version"
    echo -e "\t--certmanager - cert-manager chart version"
-   echo -e "\t--msrchart - MSR Chart Version"
+   echo -e "\t--msr - MSR Version"
    exit 1 # Exit script after printing help
 }
 
@@ -49,11 +61,11 @@ prompt() {
   echo ""
   echo "Current options:"
   echo ""
+  echo "MSR Version=${MSR_VERSION}"
   echo "Postgres Operator Version=${POSTGRES_OPERATOR_VERSION}"
   echo "Cert Manager Version=${CERT_MANAGER_VERSION}"
-  echo "MSR Chart Version=${MSR_CHART_VERSION}"
   echo ""
-  echo "1) Proceed with packaging MSR"
+  echo "1) Proceed with packaging MSR (default)"
   echo "2) Customize parameters"
   echo "3) Cancel"
   echo ""
@@ -63,14 +75,14 @@ ask() {
   echo "I'm going to ask you the value of each of these options."
   echo "You may simply press the Enter key to leave unchanged."
   echo ""
-  read -rp "Postgres Operator Version? [${POSTGRES_OPERATOR_VERSION}] " input
+  read -rp "MSR Version? [${MSR_VERSION}] (${!MSR_VERSIONS[*]}): " input
+  MSR_VERSION=${input:-$MSR_VERSION}
+  echo ""
+  read -rp "Postgres Operator Version? [${POSTGRES_OPERATOR_VERSION}]: " input
   POSTGRES_OPERATOR_VERSION=${input:-$POSTGRES_OPERATOR_VERSION}
   echo ""
-  read -rp "Cert Manager Version? [${CERT_MANAGER_VERSION}] " input
+  read -rp "Cert Manager Version? [${CERT_MANAGER_VERSION}]: " input
   CERT_MANAGER_VERSION=${input:-$CERT_MANAGER_VERSION}
-  echo ""
-  read -rp "MSR Chart Version? [${MSR_CHART_VERSION}] " input
-  MSR_CHART_VERSION=${input:-$MSR_CHART_VERSION}
   echo ""
 }
 
@@ -84,8 +96,8 @@ while [ $# -gt 0 ]; do
       CERT_MANAGER_VERSION="$2"
       QUIET_MODE=1
       ;;
-    -msrchart|--msrchart)
-      MSR_CHART_VERSION="$2"
+    -msr|--msr)
+      MSR_VERSION="$2"
       QUIET_MODE=1
       ;;
     -help|--help)
@@ -100,6 +112,8 @@ while [ $# -gt 0 ]; do
   shift
   shift
 done
+
+build_MSR_versions_map
 
 # if not a quite mode - display prompt
 # quite mode should just run all default settings
@@ -121,8 +135,7 @@ then
         exit 1
         ;;
       *)
-        prompt
-        read -rp "Select an option: " answer
+        break
         ;;
     esac
   done
@@ -139,12 +152,12 @@ helm repo add msrofficial https://registry.mirantis.com/charts/msr/msr
 echo "Update helm repository..."
 helm repo update
 
+MSR_CHART_VERSION=${MSR_VERSIONS[$MSR_VERSION]}
+
 echo "Pulling charts..."
 helm pull postgres-operator/postgres-operator --version "$POSTGRES_OPERATOR_VERSION"
 helm pull jetstack/cert-manager --version "$CERT_MANAGER_VERSION"
 helm pull msrofficial/msr --version "$MSR_CHART_VERSION"
-
-MSR_VERSION=$(helm search repo msrofficial/msr -o yaml | yq e "..|.app_version? | select(.)" -)
 
 echo "Preparing charts..."
 tar zxvf "cert-manager-v${CERT_MANAGER_VERSION}.tgz"
@@ -168,7 +181,7 @@ backup_images "mirantis/rethinkdb"
 backup_images "quay.io/jetstack/cert-manager-*v${CERT_MANAGER_VERSION}"
 backup_images "registry.opensource.zalan.do/acid/postgres-operator*v${POSTGRES_OPERATOR_VERSION}"
 
-OUTPUT_FILE="msr-${MSR_VERSION}.tar"
+OUTPUT_FILE="msr-images-${MSR_VERSION}.tar"
 
 docker save "${IMAGES[@]}" -o "$OUTPUT_FILE"
 
@@ -177,4 +190,6 @@ rm -rf postgres-operator
 rm -rf cert-manager
 rm -rf msr
 
+echo ""
 echo "Done. Use 'docker load < ${OUTPUT_FILE}' to load these images elsewhere."
+echo "Helm charts are packaged as: cert-manager-v${CERT_MANAGER_VERSION}.tgz postgres-operator-${POSTGRES_OPERATOR_VERSION}.tgz msr-${MSR_CHART_VERSION}.tgz"
