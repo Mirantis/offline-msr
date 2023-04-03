@@ -4,6 +4,11 @@ Utilities for installing MSR offline
 Execute the following command to run the utility:
 `curl https://raw.githubusercontent.com/Mirantis/offline-msr/main/get-msr.sh > get-msr.sh && chmod +x get-msr.sh && ./get-msr.sh`
 
+or
+
+`curl https://raw.githubusercontent.com/Mirantis/offline-msr/main/get-msr.sh | bash`
+for installing the default, the most recent MSR version
+
 The most current images can be pulled using get-msr.sh utility
 Here is an example output:
 ```

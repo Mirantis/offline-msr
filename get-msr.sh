@@ -2,6 +2,8 @@
 
 set -e
 
+# Postgres Operator and Cert manager versions are supported ones,
+# we don't support more recent version of Postgres Operator like 1.8.x
 POSTGRES_OPERATOR_VERSION=1.7.1
 CERT_MANAGER_VERSION=1.7.2
 MSR_VERSION=3.0.6
@@ -33,9 +35,9 @@ backup_images() {
 
 build_MSR_versions_map() {
   apps=$(helm search repo msr --versions -o yaml | yq e ".[] | .app_version" -)
-  declare -a app_versions=($apps)
+  declare -a app_versions="($apps)"
   vers=$(helm search repo msr --versions -o yaml | yq e ".[] | .version" -)
-  declare -a versions=($vers)
+  declare -a versions="($vers)"
 
   for idx in "${!app_versions[@]}"
   do
@@ -45,9 +47,7 @@ build_MSR_versions_map() {
 
 help() {
    echo ""
-   echo "Usage: $0 --postgres version --certmanager version --msr version --msrchart version"
-   echo -e "\t--postgres - postgres-operator chart version"
-   echo -e "\t--certmanager - cert-manager chart version"
+   echo "Usage: $0 --msr version"
    echo -e "\t--msr - MSR Version"
    exit 1 # Exit script after printing help
 }
@@ -72,30 +72,30 @@ prompt() {
 }
 
 ask() {
-  echo "I'm going to ask you the value of each of these options."
+  echo "I'm going to ask you the value of MSR version number."
+  echo "Postgres Operator and Cert Manager versions are not editable."
   echo "You may simply press the Enter key to leave unchanged."
   echo ""
   read -rp "MSR Version? [${MSR_VERSION}] (${!MSR_VERSIONS[*]}): " input
-  MSR_VERSION=${input:-$MSR_VERSION}
+  if [ "$input" != "" ]; then
+    if exists_in_list "${!MSR_VERSIONS[*]}" " " "$input"; then
+      MSR_VERSION=${input}
+    else
+      echo "$input not in the list of available versions"
+    fi
+  fi
   echo ""
-  read -rp "Postgres Operator Version? [${POSTGRES_OPERATOR_VERSION}]: " input
-  POSTGRES_OPERATOR_VERSION=${input:-$POSTGRES_OPERATOR_VERSION}
-  echo ""
-  read -rp "Cert Manager Version? [${CERT_MANAGER_VERSION}]: " input
-  CERT_MANAGER_VERSION=${input:-$CERT_MANAGER_VERSION}
-  echo ""
+}
+
+exists_in_list() {
+    LIST=$1
+    DELIMITER=$2
+    VALUE=$3
+    echo "$LIST" | tr "$DELIMITER" '\n' | grep -F -q -x "$VALUE"
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -postgres|--postgres)
-      POSTGRES_OPERATOR_VERSION="$2"
-      QUIET_MODE=1
-      ;;
-    -certmanager|--certmanager)
-      CERT_MANAGER_VERSION="$2"
-      QUIET_MODE=1
-      ;;
     -msr|--msr)
       MSR_VERSION="$2"
       QUIET_MODE=1
@@ -112,6 +112,8 @@ while [ $# -gt 0 ]; do
   shift
   shift
 done
+
+helm repo update
 
 build_MSR_versions_map
 
@@ -150,7 +152,6 @@ helm repo add jetstack https://charts.jetstack.io
 helm repo add msrofficial https://registry.mirantis.com/charts/msr/msr
 
 echo "Update helm repository..."
-helm repo update
 
 MSR_CHART_VERSION=${MSR_VERSIONS[$MSR_VERSION]}
 
@@ -177,7 +178,7 @@ popd > /dev/null || exit
 echo "Extracting images..."
 backup_images "registry.mirantis.com/msr/*${MSR_VERSION}"
 backup_images "registry.mirantis.com/msr/enzi*${MSR_CHART_VERSION}"
-backup_images "mirantis/rethinkdb"
+backup_images "mirantis/rethinkdb:2.3.*"
 backup_images "quay.io/jetstack/cert-manager-*v${CERT_MANAGER_VERSION}"
 backup_images "registry.opensource.zalan.do/acid/postgres-operator*v${POSTGRES_OPERATOR_VERSION}"
 
